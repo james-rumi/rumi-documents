@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<title>Rumi</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%231e5a43'/%3E%3C/svg%3E">
+<style>
+html{padding:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px);background:#fff}
+@media (prefers-color-scheme: dark){html{background:#0d1110}}
+body{margin:0;font:14px system-ui}
+img{max-width:100%}
+[hidden]{display:none!important}
+section:focus{outline:none}
+.site-msg{max-width:38ch;margin:22vh auto 0;padding:0 20px;text-align:center;color:#56615b;font:15px/1.5 system-ui,-apple-system,'Segoe UI',Roboto,sans-serif}
+.site-new{position:fixed;left:50%;bottom:max(16px,env(safe-area-inset-bottom,0px));transform:translateX(-50%);z-index:10;
+  display:flex;align-items:center;gap:14px;padding:9px 10px 9px 18px;border-radius:999px;white-space:nowrap;
+  background:#0f1412;color:#fff;font:500 13.5px/1.2 var(--font-text,system-ui,-apple-system,'Segoe UI',Roboto,sans-serif);
+  box-shadow:0 6px 24px rgba(0,0,0,.2)}
+.site-new button{font:inherit;color:#0f1412;background:#fff;border:0;border-radius:999px;padding:7px 14px;cursor:pointer}
+.site-new button:focus-visible{outline:2px solid #7fcaa3;outline-offset:2px}
+@media (prefers-color-scheme: dark){
+  .site-msg{color:#a2aca6}
+  .site-new{background:#e9eeea;color:#0d1110}
+  .site-new button{background:#0d1110;color:#e9eeea}
+}
+@media print{.site-new{display:none}}
+</style>
+</head><body>
+<p class="site-msg" id="site-msg">Opening…</p>
+<script>
+// Unlocks the document with the key at the end of the link (after #), then shows it.
+// The key never leaves the reader's browser: browsers do not send the part after # to any server.
+(async () => {
+  const msg = document.getElementById('site-msg');
+  const say = (text) => { msg.textContent = text; msg.hidden = false; };
+  const NO_KEY = 'This page opens only with its full link. Ask whoever sent it to you for the complete address.';
+  const BAD_KEY = 'This link is not complete or is no longer valid. Ask whoever sent it to you for the current address.';
+  const NO_NET = 'This page could not be loaded. Check your connection and reload.';
+  const KEY = location.hash.replace(/^#/, '');
+  if (!KEY) return say(NO_KEY);
+
+  let key;
+  try {
+    const b64 = KEY.replace(/-/g, '+').replace(/_/g, '/');
+    const raw = Uint8Array.from(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)), (c) => c.charCodeAt(0));
+    key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+  } catch (e) {
+    return say(BAD_KEY);
+  }
+  let buf;
+  try {
+    const res = await fetch('data.bin?t=' + Math.floor(Date.now() / 300000), { cache: 'no-store' });
+    if (res.status === 404) return say(BAD_KEY);
+    if (!res.ok) throw new Error('fetch ' + res.status);
+    buf = new Uint8Array(await res.arrayBuffer());
+  } catch (e) {
+    return say(NO_NET);
+  }
+  let box;
+  try {
+    const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: buf.slice(0, 12) }, key, buf.slice(12));
+    box = JSON.parse(new TextDecoder().decode(plain));
+  } catch (e) {
+    return say(BAD_KEY);
+  }
+  const nonce = Array.from(buf.slice(0, 12)).join(',');
+
+  // Put the page into this document: its styles into the head, its content into the body, then its own script.
+  const parsed = new DOMParser().parseFromString(box.page, 'text/html');
+  document.title = box.title || parsed.title || document.title;
+  for (const el of parsed.head.querySelectorAll('link[rel="stylesheet"], style')) document.head.appendChild(document.importNode(el, true));
+  const scripts = [...parsed.body.querySelectorAll('script')].map((s) => { const code = s.textContent; s.remove(); return code; });
+  msg.remove();
+  for (const node of [...parsed.body.childNodes]) document.body.appendChild(document.importNode(node, true));
+  for (const code of scripts) { const s = document.createElement('script'); s.textContent = code; document.body.appendChild(s); }
+
+  // Links inside the page (the contents list) would replace the key in the address with a section name, and a
+  // reload or a copied address would then no longer open. They scroll instead, and the address keeps the key.
+  for (const a of document.querySelectorAll('a[href^="#"]')) {
+    a.dataset.to = decodeURIComponent(a.getAttribute('href').slice(1));
+    a.setAttribute('href', '#' + KEY);
+  }
+  document.addEventListener('click', (e) => {
+    const a = e.target instanceof Element ? e.target.closest('a[data-to]') : null;
+    if (!a || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+    e.preventDefault();
+    const el = document.getElementById(a.dataset.to);
+    if (!el) return;
+    el.scrollIntoView();
+    if (!el.hasAttribute('tabindex')) el.setAttribute('tabindex', '-1');
+    el.focus({ preventScroll: true });
+  });
+  // A button on the page can hand the reader a file that is kept here encrypted with the same key
+  // (the operating model's workbook). It is fetched, unlocked in the browser and saved under its own name.
+  document.addEventListener('click', async (e) => {
+    const b = e.target instanceof Element ? e.target.closest('[data-download]') : null;
+    if (!b || b.disabled) return;
+    e.preventDefault();
+    const label = b.querySelector('span') || b;
+    const words = label.textContent;
+    b.disabled = true;
+    try {
+      const res = await fetch(b.dataset.download + '?v=' + (b.dataset.sha || Math.floor(Date.now() / 300000)), { cache: 'no-store' });
+      if (!res.ok) throw new Error('fetch ' + res.status);
+      const file = new Uint8Array(await res.arrayBuffer());
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: file.slice(0, 12) }, key, file.slice(12));
+      const url = URL.createObjectURL(new Blob([plain], { type: b.dataset.type || 'application/octet-stream' }));
+      const a = document.createElement('a');
+      a.href = url; a.download = b.dataset.name || 'download'; a.hidden = true;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (err) {
+      label.textContent = 'The file could not be downloaded. Check your connection and try again.';
+      setTimeout(() => { label.textContent = words; }, 5000);
+    }
+    b.disabled = false;
+  });
+  window.__READY = true;
+
+  // An open page says so when a newer version has been published: every new version starts with different bytes.
+  let told = false, last = Date.now();
+  const tell = () => {
+    if (told) return;
+    told = true;
+    const bar = document.createElement('div');
+    bar.className = 'site-new';
+    bar.setAttribute('role', 'status');
+    const text = document.createElement('span');
+    text.textContent = 'This document has been updated.';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Reload';
+    button.addEventListener('click', () => location.reload());
+    bar.append(text, button);
+    document.body.appendChild(bar);
+  };
+  const look = async () => {
+    if (told) return;
+    last = Date.now();
+    try {
+      const head = await fetch('data.bin?t=' + Date.now(), { cache: 'no-store', headers: { Range: 'bytes=0-11' } });
+      if (!head.ok) return;
+      const first = new Uint8Array(await head.arrayBuffer()).slice(0, 12);
+      if (first.length === 12 && Array.from(first).join(',') !== nonce) tell();
+    } catch (e) { /* offline: try again next time */ }
+  };
+  window.__LOOK = look;
+  setInterval(look, 5 * 60 * 1000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && Date.now() - last > 60 * 1000) look(); });
+})();
+
+</script>
+</body></html>
